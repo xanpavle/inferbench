@@ -39,6 +39,7 @@ Open your terminal (Command Prompt, PowerShell, or Bash) and run:
 git clone https://github.com/xanpavle/inferbench.git
 cd inferbench
 pip install -e .
+python -m inferbench run
 ```
 
 On your first run, InferBench will ask to register itself globally. Once registered, you can type `inferbench` from any folder on your PC!
