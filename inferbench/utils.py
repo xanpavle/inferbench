@@ -50,6 +50,9 @@ def safe_run(cmd, shell=False, env=None, timeout=30) -> tuple[str, str, int]:
     except Exception as e:
         return "", str(e), -1
 
+def is_installed_globally() -> bool:
+    return shutil.which("inferbench") is not None
+
 
 def install_globally() -> bool:
     """Register 'inferbench' command globally across all terminals."""
@@ -82,7 +85,8 @@ def install_globally() -> bool:
                 winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
                 ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "Environment", 2, 5000, ctypes.byref(ctypes.c_long()))
             winreg.CloseKey(key)
-            print(f"\n  {C.GREEN}✓ Registered! Open a NEW terminal window to use it.{C.RESET}\n")
+            print(f"\n  {C.GREEN}✓ Registered!{C.RESET}")
+            print(f"  {C.YELLOW}⚠ CLOSE this terminal and open a NEW one, then type: inferbench{C.RESET}\n")
             return True
         except Exception as e:
             print(f"  {C.RED}Failed to set PATH: {e}{C.RESET}")
@@ -94,7 +98,8 @@ def install_globally() -> bool:
             bin_path = local_bin / "inferbench"
             bin_path.write_text('#!/bin/sh\npython3 -m inferbench "$@"\n', encoding="utf-8")
             bin_path.chmod(0o755)
-            print(f"\n  {C.GREEN}✓ Registered at {bin_path}{C.RESET}\n")
+            print(f"\n  {C.GREEN}✓ Registered!{C.RESET}")
+            print(f"  {C.YELLOW}⚠ CLOSE this terminal and open a NEW one, then type: inferbench{C.RESET}\n")
             return True
         except Exception as e:
             print(f"  {C.RED}Failed: {e}{C.RESET}")

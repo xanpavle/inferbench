@@ -6,6 +6,7 @@ import uuid
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from inferbench import __version__
 from .config import RESULTS_DIR, OUTBOX_DIR, TELEMETRY_ENDPOINT, TELEMETRY_TIMEOUT, ensure_dirs, load_config
 
 
@@ -97,7 +98,7 @@ def build_telemetry_payload(scan: dict, model_info: dict, vulkan: dict, hip: dic
     return {
         "schema_version": 2,
         "user_id": cfg["user_id"],
-        "rocmfix_version": "inferbench-0.1.0",
+        "rocmfix_version": f"inferbench-{__version__}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "os": scan["os"],
         "shell": "cli",

@@ -3,17 +3,17 @@
 import argparse
 import sys
 from pathlib import Path
-from . import __version__
-from .config import load_config, save_config, RESULTS_DIR, ensure_dirs
-from .detector import full_scan
-from .model_finder import find_all_models, has_lmstudio_cli, has_ollama
-from .benchmarker import run_lmstudio_benchmark, run_ollama_benchmark
-from .reporter import (
+from inferbench import __version__
+from inferbench.config import load_config, save_config, RESULTS_DIR, ensure_dirs
+from inferbench.detector import full_scan
+from inferbench.model_finder import find_all_models, has_lmstudio_cli, has_ollama
+from inferbench.benchmarker import run_lmstudio_benchmark, run_ollama_benchmark
+from inferbench.reporter import (
     format_results_table, declare_winner, save_result_local,
     build_telemetry_payload, send_result
 )
-from .utils import C, enable_ansi, install_globally
-from .integrations import apply_backend_to_ollama
+from inferbench.utils import C, enable_ansi, install_globally, is_installed_globally
+from inferbench.integrations import apply_backend_to_ollama, apply_backend_to_lmstudio, apply_backend_all
 
 
 def print_header():
@@ -57,7 +57,6 @@ def cmd_run(args):
     print_header()
     cfg = load_config()
 
-    # First-run prompts
     if cfg.get("first_run"):
         if not cfg.get("installed_globally"):
             if install_globally():
@@ -92,14 +91,16 @@ def cmd_run(args):
         return
 
     runs = 1 if args.quick else 3
-    print(f"\n  {C.BOLD}Model:{C.RESET} {model_info['name']} ({runs} runs per backend)")
+    prompt_len = args.prompt_len or 128
+    print(f"\n  {C.BOLD}Model:{C.RESET} {model_info['name']}")
+    print(f"  {C.BOLD}Plan:{C.RESET} {runs} runs per backend, ~{prompt_len} token prompt\n")
 
     results = {}
     for backend in ["vulkan", "hip"]:
-        print(f"\n  {C.BOLD}Testing {backend.upper()}...{C.RESET}")
+        print(f"  {C.BOLD}Testing {backend.upper()}...{C.RESET}")
 
         def _prog(msg):
-            sys.stdout.write(f"\r    {C.GRAY}{msg}{C.RESET}".ljust(60))
+            sys.stdout.write(f"\r    {C.GRAY}{msg}{C.RESET}".ljust(70))
             sys.stdout.flush()
 
         if model_info["runtime"] == "lm_studio":
@@ -110,16 +111,19 @@ def cmd_run(args):
                 gpu_override,
                 runs,
                 _prog,
+                prompt_len=prompt_len,
             )
         else:
-            r = run_ollama_benchmark(model_info["name"], backend, gpu_override, runs, _prog)
+            r = run_ollama_benchmark(
+                model_info["name"], backend, gpu_override, runs, _prog, prompt_len=prompt_len
+            )
 
         print()
         results[backend] = r
         if r.get("success"):
-            print(f"    {C.GREEN}✓ Speed: {r['gen_tok_s']} t/s{C.RESET}")
+            print(f"    {C.GREEN}✓ Speed: {r['gen_tok_s']} t/s | TTFT: {r.get('ttft_ms', 0)} ms{C.RESET}\n")
         else:
-            print(f"    {C.RED}✗ Failed: {r.get('error', 'unknown')}{C.RESET}")
+            print(f"    {C.RED}✗ Failed: {r.get('error', 'unknown')}{C.RESET}\n")
 
     print(format_results_table(results.get("vulkan", {}), results.get("hip", {})))
     winner, pct = declare_winner(results.get("vulkan", {}), results.get("hip", {}))
@@ -140,7 +144,7 @@ def cmd_history(args):
     ensure_dirs()
     files = sorted(RESULTS_DIR.glob("bench_*.json"), reverse=True)
     if not files:
-        print(f"  {C.YELLOW}No benchmark history yet. Run 'python -m inferbench run' first.{C.RESET}\n")
+        print(f"  {C.YELLOW}No benchmark history yet. Run 'inferbench run' first.{C.RESET}\n")
         return
     print(f"  {C.BOLD}Recent benchmarks ({len(files)}):{C.RESET}\n")
     for f in files[:20]:
@@ -158,20 +162,63 @@ def cmd_history(args):
             continue
 
 
+def cmd_apply(args):
+    print_header()
+    backend = args.backend
+    target = args.target or "all"
+
+    if target == "all":
+        print(f"  {C.BOLD}Applying {backend.upper()} to ALL detected runtimes...{C.RESET}\n")
+        results = apply_backend_all(backend)
+
+        print(f"  {C.BOLD}Ollama:{C.RESET}")
+        r = results["ollama"]
+        if r.get("success"):
+            print(f"    {C.GREEN}✓ {r.get('message')}{C.RESET}\n")
+        else:
+            print(f"    {C.RED}✗ {r.get('error')}{C.RESET}\n")
+
+        print(f"  {C.BOLD}LM Studio:{C.RESET}")
+        r = results["lm_studio"]
+        if r.get("success"):
+            print(f"    {C.GREEN}✓ {r.get('message')}{C.RESET}\n")
+        else:
+            print(f"    {C.YELLOW}⚠ {r.get('error')}{C.RESET}\n")
+
+    elif target == "ollama":
+        r = apply_backend_to_ollama(backend)
+        if r.get("success"):
+            print(f"  {C.GREEN}✓ {r.get('message')}{C.RESET}\n")
+        else:
+            print(f"  {C.RED}✗ {r.get('error')}{C.RESET}\n")
+
+    elif target == "lmstudio":
+        r = apply_backend_to_lmstudio(backend)
+        if r.get("success"):
+            print(f"  {C.GREEN}✓ {r.get('message')}{C.RESET}\n")
+        else:
+            print(f"  {C.RED}✗ {r.get('error')}{C.RESET}\n")
+
+
 def main():
     enable_ansi()
     parser = argparse.ArgumentParser(prog="inferbench")
     parser.add_argument("--version", action="version", version=f"InferBench {__version__}")
     sub = parser.add_subparsers(dest="command")
+
     sub.add_parser("scan")
+
     run_p = sub.add_parser("run")
-    run_p.add_argument("--quick", action="store_true")
+    run_p.add_argument("--quick", action="store_true", help="1 run instead of 3")
+    run_p.add_argument("--prompt-len", type=int, default=128, help="Prompt length in tokens (128, 512, 1024, 2048)")
 
     sub.add_parser("history")
     sub.add_parser("install")
 
     apply_p = sub.add_parser("apply")
     apply_p.add_argument("backend", choices=["vulkan", "hip"])
+    apply_p.add_argument("--target", choices=["ollama", "lmstudio", "all"], default="all",
+                         help="Which runtime to configure (default: all)")
 
     args = parser.parse_args()
 
@@ -179,9 +226,7 @@ def main():
     elif args.command == "run": cmd_run(args)
     elif args.command == "history": cmd_history(args)
     elif args.command == "install": install_globally()
-    elif args.command == "apply":
-        res = apply_backend_to_ollama(args.backend)
-        print(res.get("message") or res.get("error"))
+    elif args.command == "apply": cmd_apply(args)
     else:
         print_header()
         parser.print_help()
